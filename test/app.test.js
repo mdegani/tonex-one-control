@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const tonexSrc = fs.readFileSync(__dirname + '/../tonex.js', 'utf8');
+const firebaseRelaySrc = fs.readFileSync(__dirname + '/../firebase-relay.js', 'utf8');
 const appSrc = fs.readFileSync(__dirname + '/../app.js', 'utf8');
 
 function createMockElement() {
@@ -23,7 +24,7 @@ function createMockElement() {
         },
         set innerHTML(val) { _innerHTML = val; },
         value: '',
-        style: new Proxy({}, { set() { return true; }, get() { return ''; } }),
+        style: new Proxy({ setProperty(){} }, { set() { return true; }, get(t,p) { return typeof t[p] === 'function' ? t[p] : ''; } }),
         className: '',
         classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
         appendChild() {},
@@ -72,9 +73,48 @@ const ctx = vm.createContext({
     ArrayBuffer: globalThis.ArrayBuffer,
     DataView: globalThis.DataView,
     alert() {},
+    location: { search: '', origin: 'http://localhost', pathname: '/' },
+    URLSearchParams: globalThis.URLSearchParams,
+    URL: globalThis.URL,
+    btoa: globalThis.btoa,
+    atob: globalThis.atob,
+    crypto: { getRandomValues(a) { for (let i=0;i<a.length;i++) a[i]=Math.floor(Math.random()*256); return a; } },
+    WebSocket: class { constructor(){} close(){} send(){} },
+    firebase: {
+        firestore: { FieldValue: { serverTimestamp() { return new Date(); } } },
+        auth: { GoogleAuthProvider: class {} },
+    },
+    fbAuth: { onAuthStateChanged() {}, signInWithPopup() {}, signOut() {} },
+    fbDb: {
+        collection() { return { doc() { return { collection() { return { doc() { return { set(){}, delete(){} }; }, where() { return { get() { return Promise.resolve({ docs: [] }); } }; }, get() { return Promise.resolve({ docs: [] }); } }; } }; } }; },
+        batch() { return { set(){}, delete(){}, commit() { return Promise.resolve(); } }; },
+        enablePersistence() { return Promise.resolve(); },
+    },
+    fbRtdb: {
+        ref() {
+            const r = { on(){}, off(){}, set(){}, remove(){}, push(){}, onDisconnect(){ return { remove(){}, set(){} }; }, child(){ return r; } };
+            return r;
+        },
+    },
+    performance: { now: () => Date.now() },
+    AudioContext: class {
+        resume() {}
+        get currentTime() { return 0; }
+        get destination() { return {}; }
+        createOscillator() {
+            return { type:'', frequency: { setValueAtTime(){}, exponentialRampToValueAtTime(){} }, connect(){}, start(){}, stop(){} };
+        }
+        createGain() {
+            return { gain: { setValueAtTime(){}, exponentialRampToValueAtTime(){} }, connect(){} };
+        }
+        createBiquadFilter() {
+            return { type:'', frequency: { value:0 }, Q: { value:0 }, connect(){} };
+        }
+    },
 });
 
 vm.runInContext(tonexSrc, ctx);
+vm.runInContext(firebaseRelaySrc, ctx);
 vm.runInContext(appSrc, ctx);
 
 const run = (expr) => vm.runInContext(`(()=>{${expr}})()`, ctx);
@@ -447,6 +487,235 @@ describe('nextName — snapshot auto-naming', () => {
     it('skips collisions', () => {
         run('state.snapshots = [{ name: "Snapshot 1" }, { name: "Snapshot 3" }]');
         assert.strictEqual(run('return nextName()'), 'Snapshot 4');
+    });
+});
+
+// ============================================================
+// Snapshot loading via handleMsg
+// ============================================================
+describe('handleMsg — snapshot creation on preset switch', () => {
+    function makeParams(baseVal) {
+        const p = {};
+        for (const [idx, def] of Object.entries(JSON.parse(run('return JSON.stringify(PARAM_DEFS)')))) {
+            p[idx] = { Val: baseVal, Min: def.Min, Max: def.Max, NAME: def.NAME };
+        }
+        return p;
+    }
+
+    function makeNames(active) {
+        const n = {};
+        for (let i = 0; i < 20; i++) n[String(i)] = `Preset ${i}`;
+        n[String(active)] = 'Test Model';
+        return n;
+    }
+
+    it('does not create snapshot from stale params during app-initiated switch', () => {
+        run('localStorage.clear()');
+        run('state.snapshots = []; state.activeSnapshotId = null');
+        run('_gotPreset = true; _lastLoadedModel = "Old Model"; _snapshotBusy = false');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = 0');
+        run('state.presetNames = {}; for (let i=0;i<20;i++) state.presetNames[String(i)] = "Preset "+i');
+
+        run('_appInitiatedSwitch = true');
+
+        const staleParams = makeParams(0);
+        const freshParams = makeParams(3);
+        const names = makeNames(5);
+
+        vm.runInContext(`(function(){
+            var sp = ${JSON.stringify(staleParams)};
+            var fp = ${JSON.stringify(freshParams)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 5 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: sp });
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 5 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: fp });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 1);
+        assert.strictEqual(run('return state.snapshots[0].name'), 'Snapshot 1');
+        assert.strictEqual(run('return state.snapshots[0].params["0"]'), 3);
+    });
+
+    it('creates snapshot immediately on boot (single fireSync)', () => {
+        run('localStorage.clear()');
+        run('state.snapshots = []; state.activeSnapshotId = null');
+        run('_gotPreset = false; _lastLoadedModel = null; _snapshotBusy = false');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = -1');
+
+        const params = makeParams(7);
+        const names = makeNames(2);
+
+        vm.runInContext(`(function(){
+            var p = ${JSON.stringify(params)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 2 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: p });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 1);
+        assert.strictEqual(run('return state.snapshots[0].params["0"]'), 7);
+    });
+
+    it('matches existing snapshot when params are the same', () => {
+        run('localStorage.clear()');
+        run('state.snapshots = []; state.activeSnapshotId = null');
+        run('_gotPreset = false; _lastLoadedModel = null; _snapshotBusy = false');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = -1');
+
+        const params = makeParams(4);
+        const names = makeNames(1);
+
+        vm.runInContext(`(function(){
+            var sp = {};
+            for (var i = 0; i < 109; i++) sp[String(i)] = 4;
+            var all = { 'Test Model': [{ id: 'existing1', model_name: 'Test Model', name: 'My Snap', params: sp }] };
+            localStorage.setItem('tonex_snapshots', JSON.stringify(all));
+        })()`, ctx);
+
+        vm.runInContext(`(function(){
+            var p = ${JSON.stringify(params)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 1 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: p });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 1);
+        assert.strictEqual(run('return state.activeSnapshotId'), 'existing1');
+    });
+
+    it('creates new snapshot when params differ from all existing', () => {
+        run('_gotPreset = true; _lastLoadedModel = "something else"');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = 0');
+
+        const params = makeParams(9);
+        const names = makeNames(1);
+
+        vm.runInContext(`(function(){
+            var p = ${JSON.stringify(params)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 1 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: p });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 2);
+        assert.strictEqual(run('return state.snapshots[1].name'), 'Snapshot 2');
+        assert.strictEqual(run('return state.snapshots[1].params["0"]'), 9);
+    });
+});
+
+// ============================================================
+// Tempo
+// ============================================================
+describe('setBpm — BPM value setting', () => {
+    it('clamps BPM to minimum 40', () => {
+        run('setBpm(10)');
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 40);
+    });
+    it('clamps BPM to maximum 240', () => {
+        run('setBpm(300)');
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 240);
+    });
+    it('rounds BPM to integer', () => {
+        run('setBpm(120.7)');
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 121);
+    });
+    it('updates state.params', () => {
+        run('setBpm(95)');
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 95);
+    });
+});
+
+describe('tapTempo — tap tempo BPM calculation', () => {
+    it('does nothing with a single tap', () => {
+        run('_tapTimes = []');
+        const before = run('return state.params[P.G_BPM].Val');
+        run('tapTempo()');
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), before);
+    });
+    it('computes 120 BPM from two taps 500ms apart', () => {
+        vm.runInContext(`(function(){
+            var t = Date.now();
+            _tapTimes = [];
+            performance.now = function() { return t; };
+            tapTempo();
+            performance.now = function() { return t + 500; };
+            tapTempo();
+        })()`, ctx);
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 120);
+    });
+    it('computes 60 BPM from two taps 1000ms apart', () => {
+        vm.runInContext(`(function(){
+            var t = Date.now();
+            _tapTimes = [];
+            performance.now = function() { return t; };
+            tapTempo();
+            performance.now = function() { return t + 1000; };
+            tapTempo();
+        })()`, ctx);
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 60);
+    });
+    it('averages last 4 taps', () => {
+        vm.runInContext(`(function(){
+            var t = Date.now();
+            _tapTimes = [];
+            performance.now = function() { return t; };
+            tapTempo();
+            performance.now = function() { return t + 500; };
+            tapTempo();
+            performance.now = function() { return t + 1000; };
+            tapTempo();
+            performance.now = function() { return t + 1500; };
+            tapTempo();
+        })()`, ctx);
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 120);
+    });
+    it('resets after 2s gap between taps', () => {
+        vm.runInContext(`(function(){
+            var t = Date.now();
+            _tapTimes = [];
+            performance.now = function() { return t; };
+            tapTempo();
+            performance.now = function() { return t + 500; };
+            tapTempo();
+            performance.now = function() { return t + 3000; };
+            tapTempo();
+        })()`, ctx);
+        // After reset, only one tap recorded — BPM should not change from previous
+        assert.strictEqual(run('return _tapTimes.length'), 1);
+    });
+    it('clamps to minimum 40 BPM', () => {
+        run('setBpm(10)');
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 40);
+    });
+    it('clamps to maximum 240 BPM', () => {
+        vm.runInContext(`(function(){
+            var t = Date.now();
+            _tapTimes = [];
+            performance.now = function() { return t; };
+            tapTempo();
+            performance.now = function() { return t + 50; };
+            tapTempo();
+        })()`, ctx);
+        assert.strictEqual(run('return state.params[P.G_BPM].Val'), 240);
     });
 });
 

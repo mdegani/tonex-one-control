@@ -90,6 +90,10 @@ const state = {
     params: {}, presetNames: {}, currentPreset: 0,
     view: 'chain', activeSection: null, dragParam: null,
     snapshots: [], activeSnapshotId: null,
+    isRemote: new URLSearchParams(location.search).has('r'),
+    relay: null,
+    remoteConnected: false,
+    user: null,
 };
 const throttle = {};
 
@@ -128,8 +132,22 @@ async function connectSerial() {
     }
 }
 
-function sendParam(i, val) { if (state.tonex) state.tonex.queueSetParam(i, val); }
-function sendPreset(p) { if (state.tonex) state.tonex.queueSetPreset(p); }
+function sendParam(i, val) {
+    if (state.isRemote) {
+        if (state.relay) state.relay.sendParam(i, val);
+    } else {
+        if (state.tonex) state.tonex.queueSetParam(i, val);
+        if (state.relay) state.relay.broadcastParam(i, val);
+    }
+}
+function sendPreset(p) {
+    if (state.isRemote) {
+        if (state.relay) state.relay.sendPreset(p);
+    } else {
+        if (state.tonex) { _appInitiatedSwitch = true; state.tonex.queueSetPreset(p); }
+        if (state.relay) state.relay.broadcastPreset(p);
+    }
+}
 
 function throttledSend(i, val) {
     const now = Date.now();
@@ -165,17 +183,36 @@ function handleMsg(msg) {
         case 'GETPARAMS':
             state.params = msg.PARAMS;
             refreshView();
-            if (_needSnapshotReload) { _needSnapshotReload = false; maybeLoadSnapshots(); }
-            else renderSnapshotBar();
+            if (_presetJustChanged) {
+                _presetJustChanged = false;
+                renderSnapshotBar();
+            } else if (_needSnapshotReload) {
+                _needSnapshotReload = false;
+                maybeLoadSnapshots();
+            } else {
+                renderSnapshotBar();
+            }
             break;
         case 'GETPRESET': {
             const changed = state.currentPreset !== msg.INDEX || !_gotPreset;
             state.currentPreset = msg.INDEX;
             _gotPreset = true;
             updatePresetSel();
-            if (changed) { _lastLoadedModel = null; _needSnapshotReload = true; maybeLoadSnapshots(); }
+            if (changed) {
+                _lastLoadedModel = null;
+                _needSnapshotReload = true;
+                _presetJustChanged = _appInitiatedSwitch;
+                _appInitiatedSwitch = false;
+            }
             break;
         }
+    }
+    if (state.relay && !state.isRemote && msg.CMD === 'GETPARAMS') {
+        state.relay.broadcastState({
+            preset: state.currentPreset,
+            presetNames: state.presetNames,
+            params: state.params,
+        });
     }
 }
 
@@ -187,6 +224,23 @@ function updateConnUI() {
     const dot = document.getElementById('connection-dot');
     const st = document.getElementById('connection-status');
     const btn = document.getElementById('connect-btn');
+    if (state.isRemote) {
+        if (!state.remoteConnected) {
+            ov.classList.remove('hidden');
+            st.textContent = 'Connecting to host...';
+            if (btn) btn.style.display = 'none';
+            dot.className = 'w-2 h-2 rounded-full bg-yellow-500 animate-pulse';
+        } else if (!state.synced) {
+            ov.classList.remove('hidden');
+            st.textContent = 'Waiting for pedal state...';
+            if (btn) btn.style.display = 'none';
+            dot.className = 'w-2 h-2 rounded-full bg-yellow-500 animate-pulse';
+        } else {
+            ov.classList.add('hidden');
+            dot.className = 'w-2 h-2 rounded-full bg-emerald-500';
+        }
+        return;
+    }
     if (!state.connected) {
         ov.classList.remove('hidden');
         st.textContent = 'serial' in navigator ? 'Plug in your Tonex One via USB' : 'WebSerial not supported — use Chrome or Edge';
@@ -201,6 +255,90 @@ function updateConnUI() {
         ov.classList.add('hidden');
         dot.className = 'w-2 h-2 rounded-full bg-emerald-500';
     }
+    updateShareBtn();
+}
+
+function updateShareBtn() {
+    let sb = document.getElementById('share-btn');
+    if (state.isRemote || !state.synced) { if (sb) sb.style.display = 'none'; return; }
+    if (!sb) return;
+    sb.style.display = '';
+    if (state.relay?.key) {
+        sb.innerHTML = `<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-4.399a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.34 8.364" /></svg>`;
+        sb.title = 'Stop sharing';
+        sb.className = 'p-1.5 rounded-lg hover:bg-zinc-800 transition-colors';
+    } else {
+        sb.innerHTML = `<svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"/></svg>`;
+        sb.title = 'Share to phone';
+        sb.className = 'p-1.5 rounded-lg hover:bg-zinc-800 transition-colors';
+    }
+}
+
+function toggleShare() {
+    if (state.relay?.key) {
+        state.relay.stop();
+        state.relay = null;
+        closeShareModal();
+        updateShareBtn();
+        return;
+    }
+    const host = new FirebaseRelayHost(
+        (cmd, data) => {
+            if (cmd === 'setParam') {
+                const { i, v } = data;
+                state.params[i] = { ...state.params[i], Val: v };
+                if (state.tonex) state.tonex.queueSetParam(i, v);
+                refreshView();
+                renderSnapshotBar();
+            } else if (cmd === 'setPreset') {
+                sendPreset(data.p);
+            }
+        },
+        (connected) => {
+            const ind = document.getElementById('remote-indicator');
+            if (ind) ind.style.display = connected ? '' : 'none';
+            if (connected && state.synced && state.relay) {
+                state.relay.broadcastState({
+                    preset: state.currentPreset,
+                    presetNames: state.presetNames,
+                    params: state.params,
+                });
+            }
+        }
+    );
+    host.start();
+    state.relay = host;
+    updateShareBtn();
+    openShareModal();
+}
+
+function openShareModal() {
+    if (!state.relay?.key) return;
+    const url = state.relay.getShareURL();
+    const qrSvg = renderQR(url, 200);
+    const el = document.getElementById('share-modal');
+    el.classList.remove('hidden');
+    el.innerHTML = `
+        <div class="fixed inset-0 bg-zinc-950/60" onclick="closeShareModal()"></div>
+        <div class="fixed inset-0 flex items-center justify-center p-4 pointer-events-none">
+            <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 max-w-sm w-full pointer-events-auto text-center">
+                <div class="flex justify-between items-start mb-4">
+                    <h3 class="font-heading font-bold text-lg">Share to Phone</h3>
+                    <button onclick="closeShareModal()" class="text-zinc-500 hover:text-zinc-300">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <p class="text-sm text-zinc-400 mb-4">Scan this QR code with your phone to control the pedal remotely.</p>
+                <div class="bg-white rounded-xl p-4 inline-block mb-4">${qrSvg}</div>
+                <p class="text-xs text-zinc-500 font-mono break-all mb-4">${url}</p>
+                <button onclick="toggleShare()" class="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm transition-colors">Stop Sharing</button>
+            </div>
+        </div>`;
+}
+
+function closeShareModal() {
+    document.getElementById('share-modal').classList.add('hidden');
+    document.getElementById('share-modal').innerHTML = '';
 }
 
 function updatePresetSel() {
@@ -223,6 +361,7 @@ function updatePresetSel() {
 function refreshView() {
     if (state.view === 'chain') renderChain();
     else if (state.view === 'detail') updateDetail();
+    updateHeaderBpm();
 }
 
 function showView(view, section) {
@@ -698,7 +837,7 @@ function modCtrl() {
     const synced = isOn(mp.sync);
     let h = `<div class="flex gap-6">${tog(P.MOD_EN,'Enable')}${tog(P.MOD_POST,'Post')}</div>${divider()}
     ${sel(P.MOD_MDL,'Model',MOD_NAMES)}${divider()}
-    ${tog(mp.sync,'Tempo Sync')}`;
+    <div class="flex items-center gap-4">${tog(mp.sync,'Tempo Sync')}${tempoButton()}</div>`;
     h += synced ? sel(mp.ts,'Time Signature',TS) : sld(mp.rate,'Rate',{decimals:1});
     mp.extra.forEach(p => { h += p.t==='select' ? sel(p.i,p.l,p.opts) : sld(p.i,p.l,{unit:p.u||'',decimals:p.d??1}); });
     return h;
@@ -886,7 +1025,7 @@ function delayCtrl() {
     let h = `${dlyTimelineSvg()}
     <div class="flex gap-6">${tog(P.DLY_EN,'Enable')}${tog(P.DLY_POST,'Post')}</div>${divider()}
     ${sel(P.DLY_MDL,'Model',DELAY_NAMES)}${divider()}
-    ${tog(dp.sync,'Tempo Sync')}`;
+    <div class="flex items-center gap-4">${tog(dp.sync,'Tempo Sync')}${tempoButton()}</div>`;
     h += synced ? sel(dp.ts,'Time Signature',TS) : sld(dp.time,'Time',{unit:'ms',decimals:0});
     dp.extra.forEach(p => { h += p.t==='select' ? sel(p.i,p.l,p.opts) : sld(p.i,p.l,{unit:p.u||'',decimals:p.d??1}); });
     return h;
@@ -1003,7 +1142,16 @@ function globalsControls() {
         ${tog(P.G_TEMPOS,'Tempo Source')}
     </div>${divider()}
     ${sld(P.G_MVOL,'Master Volume',{unit:'dB',decimals:1})}
-    ${sld(P.G_BPM,'BPM',{decimals:0,step:1})}
+    <div class="space-y-1.5">
+        <div class="flex justify-between items-baseline">
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-zinc-400">BPM</span>
+                <button onclick="openTempoPopup()" class="text-xs text-amber-500 hover:text-amber-400">Tap / Metronome</button>
+            </div>
+            <span class="font-mono text-sm text-amber-400" data-val="${P.G_BPM}">${fmt(v(P.G_BPM),0)}</span>
+        </div>
+        <input type="range" data-param="${P.G_BPM}" data-dec="0" data-unit="" min="40" max="240" step="1" value="${v(P.G_BPM)}" class="param-slider w-full">
+    </div>
     ${sld(P.G_TRIM,'Input Trim',{unit:'dB',decimals:1})}
     ${sld(P.G_TUNEREF,'Tuning Reference',{unit:'Hz',decimals:0})}`;
 }
@@ -1012,6 +1160,22 @@ function globalsControls() {
 // SETTINGS VIEW
 // ============================================================
 function renderSettings() {
+    if (state.isRemote) {
+        document.getElementById('app').innerHTML = `
+            <button class="flex items-center gap-2 text-zinc-400 hover:text-zinc-200 transition-colors mb-6" onclick="showView('chain')">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                <span class="text-sm">Signal Chain</span>
+            </button>
+            <div class="flex items-center gap-3 mb-6">
+                <span class="text-xl">⚙️</span>
+                <h2 class="font-heading font-bold text-xl uppercase tracking-wide">Settings</h2>
+            </div>
+            <div class="text-sm text-zinc-400">
+                <p class="mb-2">Connected as remote controller.</p>
+                <p class="text-zinc-500 text-xs">Settings are managed on the host device.</p>
+            </div>`;
+        return;
+    }
     document.getElementById('app').innerHTML = `
         <button class="flex items-center gap-2 text-zinc-400 hover:text-zinc-200 transition-colors mb-6" onclick="showView('chain')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -1021,6 +1185,29 @@ function renderSettings() {
             <span class="text-xl">⚙️</span>
             <h2 class="font-heading font-bold text-xl uppercase tracking-wide">Settings</h2>
         </div>
+        <div class="space-y-4 mb-6">
+            <h3 class="font-heading font-semibold text-sm uppercase tracking-wider text-zinc-400">Account</h3>
+            ${state.user ? `
+                <div class="flex items-center gap-3">
+                    ${state.user.photoURL ? `<img src="${state.user.photoURL}" class="w-8 h-8 rounded-full" referrerpolicy="no-referrer">` : ''}
+                    <div>
+                        <div class="text-sm text-zinc-200">${esc(state.user.displayName || state.user.email || '')}</div>
+                        <div class="text-xs text-zinc-500">${esc(state.user.email || '')}</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="signOut()" class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 rounded-lg text-sm transition-colors">Sign Out</button>
+                    <span class="text-xs text-zinc-500">Snapshots synced to cloud</span>
+                </div>
+            ` : `
+                <p class="text-xs text-zinc-500">Sign in to sync your snapshots across devices.</p>
+                <button onclick="signIn()" class="flex items-center gap-2 px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-800 rounded-lg text-sm font-medium transition-colors">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                    Sign in with Google
+                </button>
+            `}
+        </div>
+        <hr class="border-zinc-800 my-6">
         <div class="space-y-6">
             <div class="space-y-4">
                 <h3 class="font-heading font-semibold text-sm uppercase tracking-wider text-zinc-400">My Rig</h3>
@@ -1044,6 +1231,14 @@ function renderSettings() {
             ${Object.keys(PRESET_META).length ? `<p class="text-xs text-zinc-500">${Object.keys(PRESET_META).length} presets loaded</p>` : ''}
         </div>
         <hr class="border-zinc-800 my-8">
+        <div class="space-y-4">
+            <h3 class="font-heading font-semibold text-sm uppercase tracking-wider text-zinc-400">Data Management</h3>
+            <div class="flex gap-2 flex-wrap items-center">
+                <button onclick="clearAllSnapshots()" class="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm transition-colors">Clear All Snapshots</button>
+                <span id="clear-snap-status" class="text-xs text-zinc-500"></span>
+            </div>
+        </div>
+        <hr class="border-zinc-800 my-8">
         <div class="space-y-5">
             <h3 class="font-heading font-semibold text-sm uppercase tracking-wider text-zinc-400">About</h3>
             <div class="text-sm text-zinc-400 space-y-4 leading-relaxed">
@@ -1061,7 +1256,7 @@ function renderSettings() {
                 </div>
                 <div>
                     <p class="text-zinc-300 font-semibold mb-1.5">Your data</p>
-                    <p>All TONEX settings, snapshots, rig descriptions, and other text you provide are stored locally in your browser using localStorage. None of your pedal data or personal information is sent to a server. Your data is retrieved automatically when you return to this site in the same browser. Basic, cookie-free analytics are used to measure page visits.</p>
+                    <p>By default, all TONEX settings, snapshots, rig descriptions, and other text you provide are stored locally in your browser using localStorage. If you sign in with Google, snapshots are also synced to Firebase (Google Cloud) so you can access them across devices. Your data is retrieved automatically when you return to this site. Basic, cookie-free analytics are used to measure page visits.</p>
                 </div>
                 <div>
                     <p class="text-zinc-300 font-semibold mb-1.5">Credits</p>
@@ -1154,17 +1349,23 @@ function setupEvents() {
         if (e.target.matches('.param-slider')) {
             const i = parseInt(e.target.dataset.param);
             const val = parseFloat(e.target.value);
+            if (state.dragParam !== i && state.isRemote && state.relay) state.relay.dragStart(i);
             state.dragParam = i;
             state.params[i] = {...state.params[i], Val:val};
             updateFill(e.target);
             const ve = app.querySelector(`[data-val="${i}"]`);
             if (ve) ve.textContent = fmt(val, parseInt(e.target.dataset.dec||'1'), e.target.dataset.unit||'');
             throttledSend(i, val);
+            if (i === P.G_BPM) updateHeaderBpm();
             if (i >= P.EQ_POST && i <= P.EQ_TFREQ) updateEqCurve();
         }
     });
 
-    const clearDrag = () => setTimeout(() => { state.dragParam = null; renderSnapshotBar(); }, 250);
+    const clearDrag = () => setTimeout(() => {
+        if (state.isRemote && state.relay && state.dragParam !== null) state.relay.dragEnd(state.dragParam);
+        state.dragParam = null;
+        renderSnapshotBar();
+    }, 250);
     app.addEventListener('mouseup', clearDrag);
     app.addEventListener('touchend', clearDrag);
 
@@ -1237,6 +1438,8 @@ let _lastLoadedModel = null;
 let _gotPreset = false;
 let _snapshotBusy = false;
 let _needSnapshotReload = false;
+let _presetJustChanged = false;
+let _appInitiatedSwitch = false;
 
 function currentModelName() {
     return state.presetNames[state.currentPreset] || '';
@@ -1280,40 +1483,59 @@ function maybeLoadSnapshots() {
     loadSnapshotsForModel(model);
 }
 
-async function loadSnapshotsForModel(model) {
+function loadSnapshotsForModel(model) {
     _snapshotBusy = true;
     const all = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
     state.snapshots = all[model] || [];
 
-    const fp = fingerprint(currentParamsObj());
-
-    if (state.snapshots.length === 0) {
-        await createSnapshot(model, 'Snapshot 1', currentParamsObj());
-        state.activeSnapshotId = state.snapshots[0]?.id;
-    } else {
-        const match = state.snapshots.find(s => fingerprint(s.params) === fp);
-        if (match) {
-            state.activeSnapshotId = match.id;
+    const finishLoad = () => {
+        const fp = fingerprint(currentParamsObj());
+        if (state.snapshots.length === 0) {
+            createSnapshot(model, 'Snapshot 1', currentParamsObj());
+            state.activeSnapshotId = state.snapshots[0]?.id;
         } else {
-            await createSnapshot(model, nextName(), currentParamsObj());
-            state.activeSnapshotId = state.snapshots[state.snapshots.length - 1]?.id;
+            const match = state.snapshots.find(s => fingerprint(s.params) === fp);
+            if (match) {
+                state.activeSnapshotId = match.id;
+            } else {
+                createSnapshot(model, nextName(), currentParamsObj());
+                state.activeSnapshotId = state.snapshots[state.snapshots.length - 1]?.id;
+            }
         }
+        _snapshotBusy = false;
+        renderSnapshotBar();
+    };
+
+    if (state.user) {
+        _fsLoadForModel(model).then(cloudSnaps => {
+            if (cloudSnaps && cloudSnaps.length) {
+                const localIds = new Set(state.snapshots.map(s => s.id));
+                for (const cs of cloudSnaps) {
+                    if (!localIds.has(cs.id)) state.snapshots.push(cs);
+                }
+                const a = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
+                a[model] = state.snapshots;
+                localStorage.setItem('tonex_snapshots', JSON.stringify(a));
+            }
+            finishLoad();
+        }).catch(() => finishLoad());
+    } else {
+        finishLoad();
     }
-    _snapshotBusy = false;
-    renderSnapshotBar();
 }
 
-async function createSnapshot(model, name, params) {
+function createSnapshot(model, name, params) {
     const all = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
     if (!all[model]) all[model] = [];
     const snap = { id: Math.random().toString(36).slice(2,10), model_name: model, name, params };
     all[model].push(snap);
     localStorage.setItem('tonex_snapshots', JSON.stringify(all));
     state.snapshots.push(snap);
+    _fsWrite(snap);
     return snap;
 }
 
-async function saveActiveSnapshot() {
+function saveActiveSnapshot() {
     const snap = activeSnap();
     if (!snap) return;
     const params = currentParamsObj();
@@ -1326,15 +1548,16 @@ async function saveActiveSnapshot() {
     localStorage.setItem('tonex_snapshots', JSON.stringify(all));
     const sIdx = state.snapshots.findIndex(s => s.id === snap.id);
     if (sIdx >= 0) state.snapshots[sIdx] = snap;
+    _fsWrite(snap);
     renderSnapshotBar();
 }
 
-async function checkDirtyThen(action) {
+function checkDirtyThen(action) {
     if (isDirty()) {
         const choice = confirm(`Save changes to "${activeSnap()?.name}"?\n\nOK = Save, Cancel = Discard`);
-        if (choice) await saveActiveSnapshot();
+        if (choice) saveActiveSnapshot();
     }
-    await action();
+    action();
 }
 
 function applySnapshot(id) {
@@ -1350,29 +1573,42 @@ function applySnapshot(id) {
     renderSnapshotBar();
 }
 
-async function switchSnapshot(id) {
+function switchSnapshot(id) {
     if (id === state.activeSnapshotId) return;
-    await checkDirtyThen(() => applySnapshot(id));
+    checkDirtyThen(() => applySnapshot(id));
 }
 
-async function promptNewSnapshot() {
-    await checkDirtyThen(async () => {
+function promptNewSnapshot() {
+    checkDirtyThen(() => {
         const defaultName = nextName();
         const name = prompt('Snapshot name:', defaultName);
         if (!name?.trim()) return;
         const model = currentModelName();
         if (!model) return;
-        const r = await createSnapshot(model, name.trim(), currentParamsObj());
+        const r = createSnapshot(model, name.trim(), currentParamsObj());
         if (r) state.activeSnapshotId = r.id;
         renderSnapshotBar();
     });
 }
 
-async function deleteSnapshot(id) {
+function clearAllSnapshots() {
+    if (!confirm('Delete all snapshots for every model? This cannot be undone.')) return;
+    localStorage.removeItem('tonex_snapshots');
+    state.snapshots = [];
+    state.activeSnapshotId = null;
+    _lastLoadedModel = null;
+    _fsClearAll();
+    const el = document.getElementById('clear-snap-status');
+    if (el) el.textContent = 'All snapshots cleared.';
+    renderSnapshotBar();
+}
+
+function deleteSnapshot(id) {
     if (state.snapshots.length <= 1) return;
     const all = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
     for (const m of Object.keys(all)) { all[m] = (all[m]||[]).filter(s => s.id !== id); }
     localStorage.setItem('tonex_snapshots', JSON.stringify(all));
+    _fsDelete(id);
     const wasActive = state.activeSnapshotId === id;
     state.snapshots = state.snapshots.filter(s => s.id !== id);
     if (wasActive) {
@@ -1382,9 +1618,137 @@ async function deleteSnapshot(id) {
     renderSnapshotBar();
 }
 
+// ============================================================
+// FIRESTORE SNAPSHOT SYNC
+// ============================================================
+function _fsSnapsRef() {
+    if (!state.user || typeof fbDb === 'undefined') return null;
+    return fbDb.collection('users').doc(state.user.uid).collection('snapshots');
+}
+
+function _fsWrite(snap) {
+    const ref = _fsSnapsRef();
+    if (!ref) return;
+    ref.doc(snap.id).set({
+        model_name: snap.model_name,
+        name: snap.name,
+        params: snap.params,
+        updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+}
+
+function _fsDelete(id) {
+    const ref = _fsSnapsRef();
+    if (ref) ref.doc(id).delete();
+}
+
+function _fsClearAll() {
+    const ref = _fsSnapsRef();
+    if (!ref) return;
+    ref.get().then(snap => {
+        const batch = fbDb.batch();
+        snap.docs.forEach(doc => batch.delete(doc.ref));
+        batch.commit();
+    });
+}
+
+async function _fsLoadForModel(model) {
+    const ref = _fsSnapsRef();
+    if (!ref) return null;
+    const snap = await ref.where('model_name', '==', model).get();
+    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+async function _fsMigrateOnFirstLogin() {
+    if (!state.user) return;
+    const flag = 'tonex_migrated_' + state.user.uid;
+    if (localStorage.getItem(flag)) return;
+
+    const ref = _fsSnapsRef();
+    if (!ref) return;
+
+    const local = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
+    const cloudSnap = await ref.get();
+    const cloudIds = new Set(cloudSnap.docs.map(d => d.id));
+
+    const batch = fbDb.batch();
+    let writes = 0;
+    for (const model of Object.keys(local)) {
+        for (const snap of local[model]) {
+            if (!cloudIds.has(snap.id)) {
+                batch.set(ref.doc(snap.id), {
+                    model_name: snap.model_name,
+                    name: snap.name,
+                    params: snap.params,
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                writes++;
+            }
+        }
+    }
+    if (writes > 0) await batch.commit();
+
+    for (const doc of cloudSnap.docs) {
+        const snap = { id: doc.id, ...doc.data() };
+        const model = snap.model_name;
+        if (!local[model]) local[model] = [];
+        if (!local[model].find(s => s.id === snap.id)) {
+            local[model].push(snap);
+        }
+    }
+    localStorage.setItem('tonex_snapshots', JSON.stringify(local));
+    localStorage.setItem(flag, '1');
+}
+
+// ============================================================
+// AUTH
+// ============================================================
+function signIn() {
+    if (typeof fbAuth === 'undefined') return;
+    fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+}
+
+function signOut() {
+    if (typeof fbAuth === 'undefined') return;
+    fbAuth.signOut();
+}
+
+function onAuthChanged(user) {
+    state.user = user || null;
+    updateAuthUI();
+    if (user) {
+        _fsMigrateOnFirstLogin().then(() => {
+            if (_lastLoadedModel) {
+                const model = _lastLoadedModel;
+                _lastLoadedModel = null;
+                maybeLoadSnapshots();
+            }
+        });
+    }
+}
+
+function updateAuthUI() {
+    const avatar = document.getElementById('user-avatar');
+    if (!avatar) return;
+    if (state.user) {
+        avatar.style.display = '';
+        if (state.user.photoURL) {
+            avatar.innerHTML = `<img src="${state.user.photoURL}" class="w-5 h-5 rounded-full" referrerpolicy="no-referrer">`;
+        } else {
+            const initial = (state.user.email || '?')[0].toUpperCase();
+            avatar.innerHTML = `<div class="w-5 h-5 rounded-full bg-amber-600 flex items-center justify-center text-xs font-bold text-white">${initial}</div>`;
+        }
+    } else {
+        avatar.style.display = 'none';
+        avatar.innerHTML = '';
+    }
+    if (state.view === 'settings') renderSettings();
+}
+
 function renderSnapshotBar() {
     const bar = document.getElementById('snapshot-bar');
     if (!bar) return;
+    if (state.isRemote) { bar.innerHTML = ''; return; }
     const snaps = state.snapshots;
     if (!snaps.length) { bar.innerHTML = ''; return; }
     const dirty = isDirty();
@@ -1573,10 +1937,215 @@ function _abKeyHandler(e) {
 }
 
 // ============================================================
+// TEMPO / METRONOME
+// ============================================================
+let _metronome = { audioCtx: null, on: false, nextBeatTime: 0, timerId: null };
+let _tapTimes = [];
+const TAP_TIMEOUT = 2000;
+const TAP_COUNT = 4;
+const METRO_LOOKAHEAD = 25;
+const METRO_SCHEDULE_AHEAD = 0.1;
+
+function metroClick(ctx, time) {
+    const dur = 0.03;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(800, time);
+    osc.frequency.exponentialRampToValueAtTime(400, time + dur);
+    filter.type = 'bandpass';
+    filter.frequency.value = 800;
+    filter.Q.value = 2;
+    gain.gain.setValueAtTime(0.8, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(time);
+    osc.stop(time + dur);
+}
+
+function metroScheduler() {
+    const ctx = _metronome.audioCtx;
+    if (!ctx) return;
+    const bpm = v(P.G_BPM) || 120;
+    const interval = 60 / bpm;
+    while (_metronome.nextBeatTime < ctx.currentTime + METRO_SCHEDULE_AHEAD) {
+        metroClick(ctx, Math.max(ctx.currentTime, _metronome.nextBeatTime));
+        _metronome.nextBeatTime += interval;
+    }
+}
+
+function metroStart() {
+    if (_metronome.on) return;
+    if (!_metronome.audioCtx) _metronome.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    _metronome.audioCtx.resume();
+    _metronome.on = true;
+    _metronome.nextBeatTime = _metronome.audioCtx.currentTime;
+    _metronome.timerId = setInterval(metroScheduler, METRO_LOOKAHEAD);
+}
+
+function metroStop() {
+    _metronome.on = false;
+    if (_metronome.timerId) { clearInterval(_metronome.timerId); _metronome.timerId = null; }
+}
+
+function metroToggle() {
+    _metronome.on ? metroStop() : metroStart();
+    updateTempoPopup();
+}
+
+function tapTempo() {
+    const now = performance.now();
+    if (_tapTimes.length && now - _tapTimes[_tapTimes.length - 1] > TAP_TIMEOUT) _tapTimes = [];
+    _tapTimes.push(now);
+    if (_tapTimes.length > TAP_COUNT) _tapTimes.shift();
+    if (_tapTimes.length >= 2) {
+        let sum = 0;
+        for (let i = 1; i < _tapTimes.length; i++) sum += _tapTimes[i] - _tapTimes[i - 1];
+        const avg = sum / (_tapTimes.length - 1);
+        setBpm(Math.round(60000 / avg));
+    }
+}
+
+function setBpm(bpm) {
+    bpm = Math.round(Math.min(240, Math.max(40, bpm)));
+    state.params[P.G_BPM] = {...state.params[P.G_BPM], Val: bpm};
+    throttledSend(P.G_BPM, bpm);
+    updateHeaderBpm();
+    updateTempoPopup();
+}
+
+function updateHeaderBpm() {
+    const el = document.getElementById('header-bpm');
+    if (!el) return;
+    if (!state.synced) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = `${fmt(v(P.G_BPM), 0)} BPM`;
+}
+
+function renderTempoPopup() {
+    const bpm = Math.round(v(P.G_BPM) || 120);
+    return `<div class="fixed inset-0 bg-zinc-950/60" onclick="closeTempoPopup()"></div>
+    <div class="fixed bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-700 rounded-t-2xl p-6 max-w-md mx-auto" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between mb-5">
+            <h3 class="font-heading font-bold text-sm uppercase tracking-wider">Tempo</h3>
+            <button onclick="closeTempoPopup()" class="text-zinc-500 hover:text-zinc-300 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="text-center mb-4">
+            <input id="tempo-bpm-input" type="number" min="40" max="240" step="1" value="${bpm}"
+                class="bg-transparent text-4xl font-mono text-amber-400 text-center w-28 outline-none border-b-2 border-zinc-700 focus:border-amber-500 appearance-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                oninput="setBpm(parseInt(this.value)||120)">
+            <span class="text-sm text-zinc-500 ml-1">BPM</span>
+        </div>
+        <div class="mb-5">
+            <input id="tempo-bpm-slider" type="range" min="40" max="240" step="1" value="${bpm}"
+                class="param-slider w-full"
+                oninput="setBpm(parseInt(this.value))">
+        </div>
+        <div class="flex gap-3">
+            <button onclick="tapTempo()"
+                class="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-sm font-heading font-bold uppercase tracking-wider transition-colors active:scale-95">
+                Tap Tempo
+            </button>
+            <button onclick="metroToggle()" id="metro-toggle-btn"
+                class="flex-1 py-3 ${_metronome.on ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'} rounded-xl text-sm font-heading font-bold uppercase tracking-wider transition-colors">
+                ${_metronome.on ? '&#9632; Stop' : '&#9654; Metronome'}
+            </button>
+        </div>
+    </div>`;
+}
+
+function openTempoPopup() {
+    const el = document.getElementById('tempo-popup');
+    if (!el) return;
+    el.innerHTML = renderTempoPopup();
+    el.classList.remove('hidden');
+    const slider = document.getElementById('tempo-bpm-slider');
+    if (slider) updateFill(slider);
+}
+
+function closeTempoPopup() {
+    const el = document.getElementById('tempo-popup');
+    if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+}
+
+function updateTempoPopup() {
+    const el = document.getElementById('tempo-popup');
+    if (!el || el.classList.contains('hidden')) return;
+    const bpm = Math.round(v(P.G_BPM) || 120);
+    const inp = document.getElementById('tempo-bpm-input');
+    const sld = document.getElementById('tempo-bpm-slider');
+    if (inp && document.activeElement !== inp) inp.value = bpm;
+    if (sld) { sld.value = bpm; updateFill(sld); }
+    const btn = document.getElementById('metro-toggle-btn');
+    if (btn) {
+        btn.className = `flex-1 py-3 ${_metronome.on ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'} rounded-xl text-sm font-heading font-bold uppercase tracking-wider transition-colors`;
+        btn.innerHTML = _metronome.on ? '&#9632; Stop' : '&#9654; Metronome';
+    }
+}
+
+function tempoButton() {
+    return `<button onclick="openTempoPopup()" class="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-amber-500 text-zinc-400 hover:text-amber-400 text-xs font-mono uppercase tracking-wider transition-colors whitespace-nowrap">&#9833; ${Math.round(v(P.G_BPM)||120)} BPM</button>`;
+}
+
+// ============================================================
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
     setupEvents();
     updateConnUI();
-    document.addEventListener('keydown', _abKeyHandler);
+    updateHeaderBpm();
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !document.getElementById('tempo-popup').classList.contains('hidden')) {
+            closeTempoPopup();
+            return;
+        }
+        if (e.key === 'Escape' && !document.getElementById('share-modal').classList.contains('hidden')) {
+            closeShareModal();
+            return;
+        }
+        _abKeyHandler(e);
+    });
+
+    if (state.isRemote) {
+        const key = new URLSearchParams(location.search).get('r');
+        document.getElementById('connect-btn')?.remove();
+        document.getElementById('share-btn')?.remove();
+        const remote = new FirebaseRelayRemote(key, (data) => {
+            if (data.type === 'param') {
+                state.params[data.index] = { ...state.params[data.index], Val: data.value };
+                refreshView();
+            } else if (data.type === 'preset') {
+                state.currentPreset = data.index;
+                updatePresetSel();
+            } else if (data.type === 'status') {
+                state.connected = data.connected;
+                state.synced = data.synced;
+                updateConnUI();
+            } else if (data.preset !== undefined) {
+                state.currentPreset = data.preset;
+                state.presetNames = data.presetNames || {};
+                state.params = data.params || {};
+                state.synced = true;
+                state.connected = true;
+                updateConnUI();
+                updatePresetSel();
+                refreshView();
+            }
+        }, (connected) => {
+            state.remoteConnected = connected;
+            if (!connected) { state.synced = false; }
+            updateConnUI();
+        });
+        remote.connect();
+        state.relay = remote;
+    }
+
+    if (typeof fbAuth !== 'undefined') {
+        fbAuth.onAuthStateChanged(onAuthChanged);
+    }
 });

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-06-16
+
+### Features
+
+- **Tempo / metronome popup** — Reusable BPM control with numeric input, slider, tap tempo (averages last 4 taps), and toggleable metronome (Web Audio wood block click). Accessible from header BPM display, delay detail, modulation detail, and global settings.
+- **Clear All Snapshots** — Data Management section in Settings with button to wipe all saved snapshots
+- **Mobile remote control via QR code** — Share button in header generates a QR code for phone pairing. Phone connects via Firebase Realtime Database relay — no login required. Full state sync, slider drag optimization, automatic reconnection.
+- **Google sign-in + cloud snapshots** — Optional login via Firebase Auth. When signed in, snapshots sync to Firestore for cross-device access. Works offline via Firestore persistence. First login migrates existing localStorage snapshots to cloud.
+
+### Fixed
+
+- **Snapshot dirty state on preset switch** — Snapshots no longer show as unsaved/dirty when switching presets. Fixed race condition where stale params from the previous preset's `_fireSync` were incorrectly compared against the new preset's snapshot.
+
 ## [1.0.0] - 2026-06-15
 
 First official release. Browser-based parameter editor for the TONEX ONE pedal.

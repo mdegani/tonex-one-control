@@ -2,7 +2,7 @@
 # Export preset metadata from a running Tonex Editor instance.
 # Usage: ./scripts/export-metadata.sh > presets.tsv
 #
-# Then import presets.tsv in OneTweak: Settings > Preset Metadata > Import File
+# Then import presets.tsv in the app: Settings > Preset Metadata > Import File
 
 osascript -e '
 tell application "System Events"
