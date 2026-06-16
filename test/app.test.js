@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const tonexSrc = fs.readFileSync(__dirname + '/../tonex.js', 'utf8');
+const firebaseRelaySrc = fs.readFileSync(__dirname + '/../firebase-relay.js', 'utf8');
 const appSrc = fs.readFileSync(__dirname + '/../app.js', 'utf8');
 
 function createMockElement() {
@@ -72,6 +73,29 @@ const ctx = vm.createContext({
     ArrayBuffer: globalThis.ArrayBuffer,
     DataView: globalThis.DataView,
     alert() {},
+    location: { search: '', origin: 'http://localhost', pathname: '/' },
+    URLSearchParams: globalThis.URLSearchParams,
+    URL: globalThis.URL,
+    btoa: globalThis.btoa,
+    atob: globalThis.atob,
+    crypto: { getRandomValues(a) { for (let i=0;i<a.length;i++) a[i]=Math.floor(Math.random()*256); return a; } },
+    WebSocket: class { constructor(){} close(){} send(){} },
+    firebase: {
+        firestore: { FieldValue: { serverTimestamp() { return new Date(); } } },
+        auth: { GoogleAuthProvider: class {} },
+    },
+    fbAuth: { onAuthStateChanged() {}, signInWithPopup() {}, signOut() {} },
+    fbDb: {
+        collection() { return { doc() { return { collection() { return { doc() { return { set(){}, delete(){} }; }, where() { return { get() { return Promise.resolve({ docs: [] }); } }; }, get() { return Promise.resolve({ docs: [] }); } }; } }; } }; },
+        batch() { return { set(){}, delete(){}, commit() { return Promise.resolve(); } }; },
+        enablePersistence() { return Promise.resolve(); },
+    },
+    fbRtdb: {
+        ref() {
+            const r = { on(){}, off(){}, set(){}, remove(){}, push(){}, onDisconnect(){ return { remove(){}, set(){} }; }, child(){ return r; } };
+            return r;
+        },
+    },
     performance: { now: () => Date.now() },
     AudioContext: class {
         resume() {}
@@ -90,6 +114,7 @@ const ctx = vm.createContext({
 });
 
 vm.runInContext(tonexSrc, ctx);
+vm.runInContext(firebaseRelaySrc, ctx);
 vm.runInContext(appSrc, ctx);
 
 const run = (expr) => vm.runInContext(`(()=>{${expr}})()`, ctx);
