@@ -28,16 +28,21 @@ npm test       # runs the test suite (node --test)
 - HTML rendered via template literals in JS functions
 - Keep files focused: tonex.js for protocol, app.js for UI
 
-## Versioning
+## Versioning & Release
 
 This project uses **semantic versioning** (semver). All changes are tracked in `CHANGELOG.md`.
 
-- Update CHANGELOG.md with every feature, fix, or notable change
-- Group changes under the next version heading while in development
-- When a version is released, set the date and create a git tag (e.g., `v1.0.0`)
 - MAJOR: breaking changes to saved data format or USB protocol handling
 - MINOR: new features, new UI sections
 - PATCH: bug fixes, polish, test additions
+
+### Workflow
+
+1. Create a feature/fix branch off `main` (e.g., `fix/snapshot-dirty-state`)
+2. Develop and commit on the branch. Update CHANGELOG.md under an `## [Unreleased]` heading.
+3. When ready to test, tag an RC: `v1.1.0-rc.1`. Increment the RC number for subsequent rounds.
+4. Once validated, merge to `main`. That merge is the release — set the version and date in CHANGELOG.md and tag `main` (e.g., `v1.1.0`).
+5. `main` is always deployable — GitHub Pages serves from it.
 
 ## Testing
 

@@ -235,6 +235,7 @@ function updatePresetSel() {
 function refreshView() {
     if (state.view === 'chain') renderChain();
     else if (state.view === 'detail') updateDetail();
+    updateHeaderBpm();
 }
 
 function showView(view, section) {
@@ -710,7 +711,7 @@ function modCtrl() {
     const synced = isOn(mp.sync);
     let h = `<div class="flex gap-6">${tog(P.MOD_EN,'Enable')}${tog(P.MOD_POST,'Post')}</div>${divider()}
     ${sel(P.MOD_MDL,'Model',MOD_NAMES)}${divider()}
-    ${tog(mp.sync,'Tempo Sync')}`;
+    <div class="flex items-center gap-4">${tog(mp.sync,'Tempo Sync')}${tempoButton()}</div>`;
     h += synced ? sel(mp.ts,'Time Signature',TS) : sld(mp.rate,'Rate',{decimals:1});
     mp.extra.forEach(p => { h += p.t==='select' ? sel(p.i,p.l,p.opts) : sld(p.i,p.l,{unit:p.u||'',decimals:p.d??1}); });
     return h;
@@ -898,7 +899,7 @@ function delayCtrl() {
     let h = `${dlyTimelineSvg()}
     <div class="flex gap-6">${tog(P.DLY_EN,'Enable')}${tog(P.DLY_POST,'Post')}</div>${divider()}
     ${sel(P.DLY_MDL,'Model',DELAY_NAMES)}${divider()}
-    ${tog(dp.sync,'Tempo Sync')}`;
+    <div class="flex items-center gap-4">${tog(dp.sync,'Tempo Sync')}${tempoButton()}</div>`;
     h += synced ? sel(dp.ts,'Time Signature',TS) : sld(dp.time,'Time',{unit:'ms',decimals:0});
     dp.extra.forEach(p => { h += p.t==='select' ? sel(p.i,p.l,p.opts) : sld(p.i,p.l,{unit:p.u||'',decimals:p.d??1}); });
     return h;
@@ -1015,7 +1016,16 @@ function globalsControls() {
         ${tog(P.G_TEMPOS,'Tempo Source')}
     </div>${divider()}
     ${sld(P.G_MVOL,'Master Volume',{unit:'dB',decimals:1})}
-    ${sld(P.G_BPM,'BPM',{decimals:0,step:1})}
+    <div class="space-y-1.5">
+        <div class="flex justify-between items-baseline">
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-zinc-400">BPM</span>
+                <button onclick="openTempoPopup()" class="text-xs text-amber-500 hover:text-amber-400">Tap / Metronome</button>
+            </div>
+            <span class="font-mono text-sm text-amber-400" data-val="${P.G_BPM}">${fmt(v(P.G_BPM),0)}</span>
+        </div>
+        <input type="range" data-param="${P.G_BPM}" data-dec="0" data-unit="" min="40" max="240" step="1" value="${v(P.G_BPM)}" class="param-slider w-full">
+    </div>
     ${sld(P.G_TRIM,'Input Trim',{unit:'dB',decimals:1})}
     ${sld(P.G_TUNEREF,'Tuning Reference',{unit:'Hz',decimals:0})}`;
 }
@@ -1180,6 +1190,7 @@ function setupEvents() {
             const ve = app.querySelector(`[data-val="${i}"]`);
             if (ve) ve.textContent = fmt(val, parseInt(e.target.dataset.dec||'1'), e.target.dataset.unit||'');
             throttledSend(i, val);
+            if (i === P.G_BPM) updateHeaderBpm();
             if (i >= P.EQ_POST && i <= P.EQ_TFREQ) updateEqCurve();
         }
     });
@@ -1606,10 +1617,173 @@ function _abKeyHandler(e) {
 }
 
 // ============================================================
+// TEMPO / METRONOME
+// ============================================================
+let _metronome = { audioCtx: null, on: false, nextBeatTime: 0, timerId: null };
+let _tapTimes = [];
+const TAP_TIMEOUT = 2000;
+const TAP_COUNT = 4;
+const METRO_LOOKAHEAD = 25;
+const METRO_SCHEDULE_AHEAD = 0.1;
+
+function metroClick(ctx, time) {
+    const dur = 0.03;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(800, time);
+    osc.frequency.exponentialRampToValueAtTime(400, time + dur);
+    filter.type = 'bandpass';
+    filter.frequency.value = 800;
+    filter.Q.value = 2;
+    gain.gain.setValueAtTime(0.8, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(time);
+    osc.stop(time + dur);
+}
+
+function metroScheduler() {
+    const ctx = _metronome.audioCtx;
+    if (!ctx) return;
+    const bpm = v(P.G_BPM) || 120;
+    const interval = 60 / bpm;
+    while (_metronome.nextBeatTime < ctx.currentTime + METRO_SCHEDULE_AHEAD) {
+        metroClick(ctx, Math.max(ctx.currentTime, _metronome.nextBeatTime));
+        _metronome.nextBeatTime += interval;
+    }
+}
+
+function metroStart() {
+    if (_metronome.on) return;
+    if (!_metronome.audioCtx) _metronome.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    _metronome.audioCtx.resume();
+    _metronome.on = true;
+    _metronome.nextBeatTime = _metronome.audioCtx.currentTime;
+    _metronome.timerId = setInterval(metroScheduler, METRO_LOOKAHEAD);
+}
+
+function metroStop() {
+    _metronome.on = false;
+    if (_metronome.timerId) { clearInterval(_metronome.timerId); _metronome.timerId = null; }
+}
+
+function metroToggle() {
+    _metronome.on ? metroStop() : metroStart();
+    updateTempoPopup();
+}
+
+function tapTempo() {
+    const now = performance.now();
+    if (_tapTimes.length && now - _tapTimes[_tapTimes.length - 1] > TAP_TIMEOUT) _tapTimes = [];
+    _tapTimes.push(now);
+    if (_tapTimes.length > TAP_COUNT) _tapTimes.shift();
+    if (_tapTimes.length >= 2) {
+        let sum = 0;
+        for (let i = 1; i < _tapTimes.length; i++) sum += _tapTimes[i] - _tapTimes[i - 1];
+        const avg = sum / (_tapTimes.length - 1);
+        setBpm(Math.round(60000 / avg));
+    }
+}
+
+function setBpm(bpm) {
+    bpm = Math.round(Math.min(240, Math.max(40, bpm)));
+    state.params[P.G_BPM] = {...state.params[P.G_BPM], Val: bpm};
+    throttledSend(P.G_BPM, bpm);
+    updateHeaderBpm();
+    updateTempoPopup();
+}
+
+function updateHeaderBpm() {
+    const el = document.getElementById('header-bpm');
+    if (!el) return;
+    if (!state.synced) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = `${fmt(v(P.G_BPM), 0)} BPM`;
+}
+
+function renderTempoPopup() {
+    const bpm = Math.round(v(P.G_BPM) || 120);
+    return `<div class="fixed inset-0 bg-zinc-950/60" onclick="closeTempoPopup()"></div>
+    <div class="fixed bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-700 rounded-t-2xl p-6 max-w-md mx-auto" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between mb-5">
+            <h3 class="font-heading font-bold text-sm uppercase tracking-wider">Tempo</h3>
+            <button onclick="closeTempoPopup()" class="text-zinc-500 hover:text-zinc-300 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="text-center mb-4">
+            <input id="tempo-bpm-input" type="number" min="40" max="240" step="1" value="${bpm}"
+                class="bg-transparent text-4xl font-mono text-amber-400 text-center w-28 outline-none border-b-2 border-zinc-700 focus:border-amber-500 appearance-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                oninput="setBpm(parseInt(this.value)||120)">
+            <span class="text-sm text-zinc-500 ml-1">BPM</span>
+        </div>
+        <div class="mb-5">
+            <input id="tempo-bpm-slider" type="range" min="40" max="240" step="1" value="${bpm}"
+                class="param-slider w-full"
+                oninput="setBpm(parseInt(this.value))">
+        </div>
+        <div class="flex gap-3">
+            <button onclick="tapTempo()"
+                class="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-sm font-heading font-bold uppercase tracking-wider transition-colors active:scale-95">
+                Tap Tempo
+            </button>
+            <button onclick="metroToggle()" id="metro-toggle-btn"
+                class="flex-1 py-3 ${_metronome.on ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'} rounded-xl text-sm font-heading font-bold uppercase tracking-wider transition-colors">
+                ${_metronome.on ? '&#9632; Stop' : '&#9654; Metronome'}
+            </button>
+        </div>
+    </div>`;
+}
+
+function openTempoPopup() {
+    const el = document.getElementById('tempo-popup');
+    if (!el) return;
+    el.innerHTML = renderTempoPopup();
+    el.classList.remove('hidden');
+    const slider = document.getElementById('tempo-bpm-slider');
+    if (slider) updateFill(slider);
+}
+
+function closeTempoPopup() {
+    const el = document.getElementById('tempo-popup');
+    if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+}
+
+function updateTempoPopup() {
+    const el = document.getElementById('tempo-popup');
+    if (!el || el.classList.contains('hidden')) return;
+    const bpm = Math.round(v(P.G_BPM) || 120);
+    const inp = document.getElementById('tempo-bpm-input');
+    const sld = document.getElementById('tempo-bpm-slider');
+    if (inp && document.activeElement !== inp) inp.value = bpm;
+    if (sld) { sld.value = bpm; updateFill(sld); }
+    const btn = document.getElementById('metro-toggle-btn');
+    if (btn) {
+        btn.className = `flex-1 py-3 ${_metronome.on ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'} rounded-xl text-sm font-heading font-bold uppercase tracking-wider transition-colors`;
+        btn.innerHTML = _metronome.on ? '&#9632; Stop' : '&#9654; Metronome';
+    }
+}
+
+function tempoButton() {
+    return `<button onclick="openTempoPopup()" class="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-amber-500 text-zinc-400 hover:text-amber-400 text-xs font-mono uppercase tracking-wider transition-colors whitespace-nowrap">&#9833; ${Math.round(v(P.G_BPM)||120)} BPM</button>`;
+}
+
+// ============================================================
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
     setupEvents();
     updateConnUI();
-    document.addEventListener('keydown', _abKeyHandler);
+    updateHeaderBpm();
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !document.getElementById('tempo-popup').classList.contains('hidden')) {
+            closeTempoPopup();
+            return;
+        }
+        _abKeyHandler(e);
+    });
 });

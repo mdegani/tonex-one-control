@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Features
+
+- **Tempo / metronome popup** — Reusable BPM control with numeric input, slider, tap tempo (averages last 4 taps), and toggleable metronome (Web Audio wood block click). Accessible from header BPM display, delay detail, modulation detail, and global settings.
+- **Clear All Snapshots** — Data Management section in Settings with button to wipe all saved snapshots
+
+### Fixed
+
+- **Snapshot dirty state on preset switch** — Snapshots no longer show as unsaved/dirty when switching presets. Fixed race condition where stale params from the previous preset's `_fireSync` were incorrectly compared against the new preset's snapshot.
+
 ## [1.0.0] - 2026-06-15
 
 First official release. Browser-based parameter editor for the TONEX ONE pedal.
