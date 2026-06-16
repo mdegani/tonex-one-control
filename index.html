@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Tonex One">
+    <title>Tonex One</title>
+    <link rel="icon" href="favicon.ico">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        heading: ['Syne', 'sans-serif'],
+                        body: ['Outfit', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        body { font-family: 'Outfit', sans-serif; }
+
+        .param-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 9999px;
+            outline: none;
+            cursor: pointer;
+            --fill: 50%;
+            background: linear-gradient(to right,
+                #d97706 0%, #d97706 var(--fill),
+                #3f3f46 var(--fill), #3f3f46 100%);
+        }
+        .param-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #fbbf24;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(245,158,11,0.4);
+            border: 2px solid #92400e;
+        }
+        .param-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #fbbf24;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(245,158,11,0.4);
+            border: 2px solid #92400e;
+        }
+        .param-slider::-moz-range-track {
+            height: 6px;
+            border-radius: 9999px;
+            background: #3f3f46;
+        }
+
+        .toggle-track {
+            transition: background-color 0.2s;
+        }
+        .toggle-dot {
+            transition: transform 0.2s, background-color 0.2s;
+        }
+        input:checked ~ .toggle-track { background-color: #d97706; }
+        input:checked ~ .toggle-track .toggle-dot {
+            transform: translateX(20px);
+            background-color: #fff;
+        }
+
+        .signal-card { transition: all 0.3s ease; }
+        .signal-card:hover { border-color: #52525b; }
+        .signal-card:active { transform: scale(0.99); }
+
+        .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+        .scrollbar-none::-webkit-scrollbar { display: none; }
+
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-50 min-h-screen">
+    <div id="connection-overlay" class="fixed inset-0 bg-zinc-950/95 z-50 flex items-center justify-center">
+        <div class="text-center">
+            <div class="font-heading font-bold text-2xl tracking-tight mb-2">TONEX ONE</div>
+            <div id="connection-status" class="text-zinc-400 text-sm font-body mb-4">Plug in your Tonex One via USB</div>
+            <button id="connect-btn" onclick="connectSerial()" class="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-heading font-bold uppercase tracking-wider transition-colors">Connect</button>
+        </div>
+    </div>
+
+    <header class="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/60">
+        <div class="max-w-2xl mx-auto px-4 py-3">
+            <div class="flex items-center justify-between">
+                <div class="font-heading font-bold text-lg tracking-tight cursor-pointer" onclick="showView('chain')">TONEX ONE</div>
+                <div class="flex items-center gap-3">
+                    <div id="connection-dot" class="w-2 h-2 rounded-full bg-red-500 cursor-pointer" onclick="connectSerial()" title="Connect"></div>
+                    <button id="settings-btn" class="p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" aria-label="Settings">
+                        <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <select id="preset-select" class="mt-2 w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm font-mono text-zinc-200 focus:outline-none focus:ring-1 focus:ring-amber-500/50 appearance-none cursor-pointer">
+                <option>Loading presets...</option>
+            </select>
+            <div id="snapshot-bar" class="mt-2"></div>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-2xl mx-auto px-4 py-6 pb-24"></main>
+
+    <script src="tonex.js?v=1"></script>
+    <script src="app.js?v=6"></script>
+    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "08ec753fa21d4cbd9baeda8a01f16ad1"}'></script>
+</body>
+</html>

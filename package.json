@@ -1,0 +1,10 @@
+{
+  "name": "tonex-one-control",
+  "version": "1.0.0",
+  "description": "Browser-based controller for the Tonex One guitar pedal via WebSerial",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve . -l 8080",
+    "test": "node --test test/*.test.js"
+  }
+}
