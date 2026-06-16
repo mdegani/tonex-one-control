@@ -1256,7 +1256,13 @@ function renderSettings() {
                 </div>
                 <div>
                     <p class="text-zinc-300 font-semibold mb-1.5">Your data</p>
-                    <p>By default, all TONEX settings, snapshots, rig descriptions, and other text you provide are stored locally in your browser using localStorage. If you sign in with Google, snapshots are also synced to Firebase (Google Cloud) so you can access them across devices. Your data is retrieved automatically when you return to this site. Basic, cookie-free analytics are used to measure page visits.</p>
+                    <ul class="list-disc list-inside space-y-1">
+                        <li><strong class="text-zinc-300">Local storage</strong> &mdash; Preset settings, snapshots, rig descriptions, and preferences are stored in your browser&rsquo;s localStorage. This data never leaves your device unless you sign in.</li>
+                        <li><strong class="text-zinc-300">Google sign-in</strong> (optional) &mdash; If you sign in with Google, your email and profile photo are provided by Firebase Authentication (Google Cloud). Snapshots are synced to Cloud Firestore so you can access them on other devices.</li>
+                        <li><strong class="text-zinc-300">Phone remote control</strong> &mdash; When you share a session via QR code, pedal state is relayed through Firebase Realtime Database. Session data is ephemeral and deleted when you disconnect.</li>
+                        <li><strong class="text-zinc-300">Analytics</strong> &mdash; Cloudflare Web Analytics measures page visits. It is cookie-free and does not track individual users.</li>
+                    </ul>
+                    <p class="mt-2">No data is sold or shared with third parties. See the full <a href="privacy.html" class="text-amber-500 hover:text-amber-400 underline underline-offset-2" target="_blank">Privacy Policy</a> for details.</p>
                 </div>
                 <div>
                     <p class="text-zinc-300 font-semibold mb-1.5">Credits</p>
