@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-06-16
+
+### Fixed
+
+- **Privacy disclosure** — Updated "Your data" section in Settings to accurately describe what data is stored locally vs. sent to Firebase (auth, cloud snapshots, relay sessions)
+- **Privacy policy** — Added `privacy.html` with full details on data handling, third-party services, retention, and deletion
+
 ## [1.1.0] - 2026-06-16
 
 ### Features

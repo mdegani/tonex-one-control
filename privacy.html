@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - Tonex One Control</title>
+    <link rel="icon" href="favicon.ico">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        heading: ['Syne', 'sans-serif'],
+                        body: ['Outfit', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style>body { font-family: 'Outfit', sans-serif; }</style>
+</head>
+<body class="bg-zinc-950 text-zinc-400 min-h-screen">
+    <div class="max-w-2xl mx-auto px-4 py-10">
+        <a href="/" class="font-heading font-bold text-lg text-zinc-50 tracking-tight hover:text-amber-400 transition-colors">TONEX ONE</a>
+
+        <h1 class="font-heading font-bold text-2xl text-zinc-50 mt-8 mb-6">Privacy Policy</h1>
+        <p class="mb-2 text-sm text-zinc-500">Effective date: June 16, 2026</p>
+
+        <p class="mb-6">Tonex One Control (<a href="https://tonex.markbuilds.ca" class="text-amber-500 hover:text-amber-400 underline underline-offset-2">tonex.markbuilds.ca</a>) is a free, open-source tool for editing parameters on the IK Multimedia TONEX ONE guitar pedal. This policy explains what data the app handles and how.</p>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Data stored in your browser</h2>
+            <p>By default, all data stays on your device. The app uses your browser's <strong class="text-zinc-300">localStorage</strong> to persist:</p>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+                <li>Pedal preset settings and parameter values</li>
+                <li>Snapshots (saved parameter configurations per tone model)</li>
+                <li>Rig descriptions (guitars, pedals, pedalboard text you enter)</li>
+                <li>Imported preset metadata (model names, amp/cab descriptions)</li>
+            </ul>
+            <p class="mt-2">This data is never transmitted anywhere unless you choose to sign in (see below). You can clear it at any time through your browser settings or the "Clear All Snapshots" button in the app.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Google sign-in and cloud sync</h2>
+            <p>Signing in is optional. If you sign in with Google, the app uses <strong class="text-zinc-300">Firebase Authentication</strong> (operated by Google) to verify your identity. The following information is received from Google and used by the app:</p>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+                <li>Your email address (displayed in the app so you know which account is signed in)</li>
+                <li>Your profile photo URL (displayed as an avatar in the header)</li>
+                <li>A unique user ID (used to associate your cloud data with your account)</li>
+            </ul>
+            <p class="mt-2">When signed in, your snapshots are synced to <strong class="text-zinc-300">Cloud Firestore</strong> (Google Cloud) so you can access them across devices. Firestore data is stored in Google's data centers and governed by <a href="https://firebase.google.com/terms" class="text-amber-500 hover:text-amber-400 underline underline-offset-2" target="_blank">Firebase Terms of Service</a> and <a href="https://policies.google.com/privacy" class="text-amber-500 hover:text-amber-400 underline underline-offset-2" target="_blank">Google's Privacy Policy</a>.</p>
+            <p class="mt-2">Signing out stops cloud sync. Your snapshots remain available locally in localStorage.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Phone remote control</h2>
+            <p>The QR code sharing feature uses <strong class="text-zinc-300">Firebase Realtime Database</strong> to relay pedal state between your computer and phone. This data includes:</p>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+                <li>Current preset parameters and values</li>
+                <li>Slider commands sent from the phone</li>
+            </ul>
+            <p class="mt-2">Session data is <strong class="text-zinc-300">ephemeral</strong> &mdash; it is automatically deleted when either device disconnects. No account is required to use this feature.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">USB communication</h2>
+            <p>The app communicates directly with your TONEX ONE pedal over USB using the <strong class="text-zinc-300">WebSerial API</strong>. All communication happens locally between your browser and the pedal. No pedal data is sent to any server.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Analytics</h2>
+            <p><strong class="text-zinc-300">Cloudflare Web Analytics</strong> is used to measure page visits. It does not use cookies, does not track individual users, and does not collect personal information. See <a href="https://www.cloudflare.com/privacypolicy/" class="text-amber-500 hover:text-amber-400 underline underline-offset-2" target="_blank">Cloudflare's Privacy Policy</a>.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Third-party services</h2>
+            <table class="w-full text-sm mt-2">
+                <thead>
+                    <tr class="text-left text-zinc-300 border-b border-zinc-800">
+                        <th class="pb-2 pr-4">Service</th>
+                        <th class="pb-2 pr-4">Provider</th>
+                        <th class="pb-2">Purpose</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-800/50">
+                    <tr><td class="py-2 pr-4">Firebase Authentication</td><td class="py-2 pr-4">Google</td><td class="py-2">Google sign-in</td></tr>
+                    <tr><td class="py-2 pr-4">Cloud Firestore</td><td class="py-2 pr-4">Google</td><td class="py-2">Cloud snapshot storage</td></tr>
+                    <tr><td class="py-2 pr-4">Realtime Database</td><td class="py-2 pr-4">Google</td><td class="py-2">Phone remote relay</td></tr>
+                    <tr><td class="py-2 pr-4">Web Analytics</td><td class="py-2 pr-4">Cloudflare</td><td class="py-2">Page visit metrics</td></tr>
+                    <tr><td class="py-2 pr-4">GitHub Pages</td><td class="py-2 pr-4">GitHub</td><td class="py-2">Hosting</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Data retention and deletion</h2>
+            <ul class="list-disc list-inside space-y-1">
+                <li><strong class="text-zinc-300">localStorage</strong> &mdash; Persists until you clear your browser data or use the in-app clear button.</li>
+                <li><strong class="text-zinc-300">Cloud snapshots</strong> &mdash; Stored in Firestore while your account exists. You can delete individual snapshots or all snapshots from the app.</li>
+                <li><strong class="text-zinc-300">Relay sessions</strong> &mdash; Deleted automatically on disconnect.</li>
+            </ul>
+            <p class="mt-2">To delete all cloud data, sign in and use "Clear All Snapshots" in Settings, then sign out.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">No selling or sharing</h2>
+            <p>Your data is not sold, rented, or shared with third parties for marketing or advertising purposes. Data is only transmitted to the third-party services listed above for their stated purposes.</p>
+        </section>
+
+        <section class="mb-8">
+            <h2 class="font-heading font-semibold text-lg text-zinc-200 mb-3">Contact</h2>
+            <p>For questions about this policy, open an issue on <a href="https://github.com/mdegani/tonex-one-control" class="text-amber-500 hover:text-amber-400 underline underline-offset-2" target="_blank">GitHub</a> or email <a href="mailto:mark.degani@gmail.com" class="text-amber-500 hover:text-amber-400 underline underline-offset-2">mark.degani@gmail.com</a>.</p>
+        </section>
+
+        <hr class="border-zinc-800 mb-4">
+        <p class="text-zinc-500 text-xs">TONEX and TONEX ONE are trademarks of <a href="https://www.ikmultimedia.com" class="hover:text-zinc-400 underline underline-offset-2" target="_blank">IK Multimedia</a>. This project is not affiliated with or endorsed by IK Multimedia.</p>
+    </div>
+</body>
+</html>
