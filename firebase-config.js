@@ -1,12 +1,11 @@
-// TODO: Replace with your Firebase project config from Firebase Console → Project Settings → Web App
 const firebaseConfig = {
-    apiKey: 'YOUR_API_KEY',
-    authDomain: 'YOUR_PROJECT.firebaseapp.com',
-    databaseURL: 'https://YOUR_PROJECT-default-rtdb.firebaseio.com',
-    projectId: 'YOUR_PROJECT',
-    storageBucket: 'YOUR_PROJECT.appspot.com',
-    messagingSenderId: 'YOUR_SENDER_ID',
-    appId: 'YOUR_APP_ID',
+    apiKey: 'AIzaSyAPXKYIseWWutXcJS4vZJE_AF1Nm5d4ncs',
+    authDomain: 'signal-chain-91e32.firebaseapp.com',
+    databaseURL: 'https://signal-chain-91e32-default-rtdb.firebaseio.com',
+    projectId: 'signal-chain-91e32',
+    storageBucket: 'signal-chain-91e32.firebasestorage.app',
+    messagingSenderId: '131855332902',
+    appId: '1:131855332902:web:3010130937d14ad74158e7',
 };
 
 firebase.initializeApp(firebaseConfig);
