@@ -284,6 +284,7 @@ class TonexSerial {
             this.paramValues[G_BPM] = _b2f(sd, sl - SE_BPM);
             if (sl >= SE_TUNE + 1) this.paramValues[G_TUNEREF] = sd[sl - SE_TUNE] | (sd[sl - SE_TUNE + 1] << 8);
         }
+        const prevPreset = this.currentPreset;
         this.currentPreset = this._activeIdx();
 
         if (this._bootInit) {
@@ -291,6 +292,8 @@ class TonexSerial {
             this._state = 'SYNCING';
             console.log('Tonex: Starting preset sync, active preset:', this.currentPreset);
             this._write(_reqPreset(0, false));
+        } else if (this.currentPreset !== prevPreset) {
+            this._write(_reqPreset(this.currentPreset, false));
         } else {
             this._fireSync();
         }

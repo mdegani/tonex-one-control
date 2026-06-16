@@ -451,6 +451,138 @@ describe('nextName — snapshot auto-naming', () => {
 });
 
 // ============================================================
+// Snapshot loading via handleMsg
+// ============================================================
+describe('handleMsg — snapshot creation on preset switch', () => {
+    function makeParams(baseVal) {
+        const p = {};
+        for (const [idx, def] of Object.entries(JSON.parse(run('return JSON.stringify(PARAM_DEFS)')))) {
+            p[idx] = { Val: baseVal, Min: def.Min, Max: def.Max, NAME: def.NAME };
+        }
+        return p;
+    }
+
+    function makeNames(active) {
+        const n = {};
+        for (let i = 0; i < 20; i++) n[String(i)] = `Preset ${i}`;
+        n[String(active)] = 'Test Model';
+        return n;
+    }
+
+    it('does not create snapshot from stale params during app-initiated switch', () => {
+        run('localStorage.clear()');
+        run('state.snapshots = []; state.activeSnapshotId = null');
+        run('_gotPreset = true; _lastLoadedModel = "Old Model"; _snapshotBusy = false');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = 0');
+        run('state.presetNames = {}; for (let i=0;i<20;i++) state.presetNames[String(i)] = "Preset "+i');
+
+        run('_appInitiatedSwitch = true');
+
+        const staleParams = makeParams(0);
+        const freshParams = makeParams(3);
+        const names = makeNames(5);
+
+        vm.runInContext(`(function(){
+            var sp = ${JSON.stringify(staleParams)};
+            var fp = ${JSON.stringify(freshParams)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 5 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: sp });
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 5 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: fp });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 1);
+        assert.strictEqual(run('return state.snapshots[0].name'), 'Snapshot 1');
+        assert.strictEqual(run('return state.snapshots[0].params["0"]'), 3);
+    });
+
+    it('creates snapshot immediately on boot (single fireSync)', () => {
+        run('localStorage.clear()');
+        run('state.snapshots = []; state.activeSnapshotId = null');
+        run('_gotPreset = false; _lastLoadedModel = null; _snapshotBusy = false');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = -1');
+
+        const params = makeParams(7);
+        const names = makeNames(2);
+
+        vm.runInContext(`(function(){
+            var p = ${JSON.stringify(params)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 2 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: p });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 1);
+        assert.strictEqual(run('return state.snapshots[0].params["0"]'), 7);
+    });
+
+    it('matches existing snapshot when params are the same', () => {
+        run('localStorage.clear()');
+        run('state.snapshots = []; state.activeSnapshotId = null');
+        run('_gotPreset = false; _lastLoadedModel = null; _snapshotBusy = false');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = -1');
+
+        const params = makeParams(4);
+        const names = makeNames(1);
+
+        vm.runInContext(`(function(){
+            var sp = {};
+            for (var i = 0; i < 109; i++) sp[String(i)] = 4;
+            var all = { 'Test Model': [{ id: 'existing1', model_name: 'Test Model', name: 'My Snap', params: sp }] };
+            localStorage.setItem('tonex_snapshots', JSON.stringify(all));
+        })()`, ctx);
+
+        vm.runInContext(`(function(){
+            var p = ${JSON.stringify(params)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 1 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: p });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 1);
+        assert.strictEqual(run('return state.activeSnapshotId'), 'existing1');
+    });
+
+    it('creates new snapshot when params differ from all existing', () => {
+        run('_gotPreset = true; _lastLoadedModel = "something else"');
+        run('_needSnapshotReload = false; _presetJustChanged = false; _appInitiatedSwitch = false');
+        run('state.currentPreset = 0');
+
+        const params = makeParams(9);
+        const names = makeNames(1);
+
+        vm.runInContext(`(function(){
+            var p = ${JSON.stringify(params)};
+            var nm = ${JSON.stringify(names)};
+            handleMsg({ CMD: 'GETSYNCCOMPLETE', SYNC: 1 });
+            handleMsg({ CMD: 'GETPRESETNAMES', PRESET_NAMES: nm });
+            handleMsg({ CMD: 'GETPRESET', INDEX: 1 });
+            handleMsg({ CMD: 'GETPARAMS', PARAMS: p });
+        })()`, ctx);
+
+        assert.strictEqual(run('return isDirty()'), false);
+        assert.strictEqual(run('return state.snapshots.length'), 2);
+        assert.strictEqual(run('return state.snapshots[1].name'), 'Snapshot 2');
+        assert.strictEqual(run('return state.snapshots[1].params["0"]'), 9);
+    });
+});
+
+// ============================================================
 // A/B comparison
 // ============================================================
 describe('abFmtVal — A/B display formatting', () => {

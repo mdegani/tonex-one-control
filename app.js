@@ -129,7 +129,7 @@ async function connectSerial() {
 }
 
 function sendParam(i, val) { if (state.tonex) state.tonex.queueSetParam(i, val); }
-function sendPreset(p) { if (state.tonex) state.tonex.queueSetPreset(p); }
+function sendPreset(p) { if (state.tonex) { _appInitiatedSwitch = true; state.tonex.queueSetPreset(p); } }
 
 function throttledSend(i, val) {
     const now = Date.now();
@@ -165,15 +165,27 @@ function handleMsg(msg) {
         case 'GETPARAMS':
             state.params = msg.PARAMS;
             refreshView();
-            if (_needSnapshotReload) { _needSnapshotReload = false; maybeLoadSnapshots(); }
-            else renderSnapshotBar();
+            if (_presetJustChanged) {
+                _presetJustChanged = false;
+                renderSnapshotBar();
+            } else if (_needSnapshotReload) {
+                _needSnapshotReload = false;
+                maybeLoadSnapshots();
+            } else {
+                renderSnapshotBar();
+            }
             break;
         case 'GETPRESET': {
             const changed = state.currentPreset !== msg.INDEX || !_gotPreset;
             state.currentPreset = msg.INDEX;
             _gotPreset = true;
             updatePresetSel();
-            if (changed) { _lastLoadedModel = null; _needSnapshotReload = true; maybeLoadSnapshots(); }
+            if (changed) {
+                _lastLoadedModel = null;
+                _needSnapshotReload = true;
+                _presetJustChanged = _appInitiatedSwitch;
+                _appInitiatedSwitch = false;
+            }
             break;
         }
     }
@@ -1044,6 +1056,14 @@ function renderSettings() {
             ${Object.keys(PRESET_META).length ? `<p class="text-xs text-zinc-500">${Object.keys(PRESET_META).length} presets loaded</p>` : ''}
         </div>
         <hr class="border-zinc-800 my-8">
+        <div class="space-y-4">
+            <h3 class="font-heading font-semibold text-sm uppercase tracking-wider text-zinc-400">Data Management</h3>
+            <div class="flex gap-2 flex-wrap items-center">
+                <button onclick="clearAllSnapshots()" class="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm transition-colors">Clear All Snapshots</button>
+                <span id="clear-snap-status" class="text-xs text-zinc-500"></span>
+            </div>
+        </div>
+        <hr class="border-zinc-800 my-8">
         <div class="space-y-5">
             <h3 class="font-heading font-semibold text-sm uppercase tracking-wider text-zinc-400">About</h3>
             <div class="text-sm text-zinc-400 space-y-4 leading-relaxed">
@@ -1237,6 +1257,8 @@ let _lastLoadedModel = null;
 let _gotPreset = false;
 let _snapshotBusy = false;
 let _needSnapshotReload = false;
+let _presetJustChanged = false;
+let _appInitiatedSwitch = false;
 
 function currentModelName() {
     return state.presetNames[state.currentPreset] || '';
@@ -1280,7 +1302,7 @@ function maybeLoadSnapshots() {
     loadSnapshotsForModel(model);
 }
 
-async function loadSnapshotsForModel(model) {
+function loadSnapshotsForModel(model) {
     _snapshotBusy = true;
     const all = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
     state.snapshots = all[model] || [];
@@ -1288,14 +1310,14 @@ async function loadSnapshotsForModel(model) {
     const fp = fingerprint(currentParamsObj());
 
     if (state.snapshots.length === 0) {
-        await createSnapshot(model, 'Snapshot 1', currentParamsObj());
+        createSnapshot(model, 'Snapshot 1', currentParamsObj());
         state.activeSnapshotId = state.snapshots[0]?.id;
     } else {
         const match = state.snapshots.find(s => fingerprint(s.params) === fp);
         if (match) {
             state.activeSnapshotId = match.id;
         } else {
-            await createSnapshot(model, nextName(), currentParamsObj());
+            createSnapshot(model, nextName(), currentParamsObj());
             state.activeSnapshotId = state.snapshots[state.snapshots.length - 1]?.id;
         }
     }
@@ -1303,7 +1325,7 @@ async function loadSnapshotsForModel(model) {
     renderSnapshotBar();
 }
 
-async function createSnapshot(model, name, params) {
+function createSnapshot(model, name, params) {
     const all = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
     if (!all[model]) all[model] = [];
     const snap = { id: Math.random().toString(36).slice(2,10), model_name: model, name, params };
@@ -1313,7 +1335,7 @@ async function createSnapshot(model, name, params) {
     return snap;
 }
 
-async function saveActiveSnapshot() {
+function saveActiveSnapshot() {
     const snap = activeSnap();
     if (!snap) return;
     const params = currentParamsObj();
@@ -1329,12 +1351,12 @@ async function saveActiveSnapshot() {
     renderSnapshotBar();
 }
 
-async function checkDirtyThen(action) {
+function checkDirtyThen(action) {
     if (isDirty()) {
         const choice = confirm(`Save changes to "${activeSnap()?.name}"?\n\nOK = Save, Cancel = Discard`);
-        if (choice) await saveActiveSnapshot();
+        if (choice) saveActiveSnapshot();
     }
-    await action();
+    action();
 }
 
 function applySnapshot(id) {
@@ -1350,25 +1372,36 @@ function applySnapshot(id) {
     renderSnapshotBar();
 }
 
-async function switchSnapshot(id) {
+function switchSnapshot(id) {
     if (id === state.activeSnapshotId) return;
-    await checkDirtyThen(() => applySnapshot(id));
+    checkDirtyThen(() => applySnapshot(id));
 }
 
-async function promptNewSnapshot() {
-    await checkDirtyThen(async () => {
+function promptNewSnapshot() {
+    checkDirtyThen(() => {
         const defaultName = nextName();
         const name = prompt('Snapshot name:', defaultName);
         if (!name?.trim()) return;
         const model = currentModelName();
         if (!model) return;
-        const r = await createSnapshot(model, name.trim(), currentParamsObj());
+        const r = createSnapshot(model, name.trim(), currentParamsObj());
         if (r) state.activeSnapshotId = r.id;
         renderSnapshotBar();
     });
 }
 
-async function deleteSnapshot(id) {
+function clearAllSnapshots() {
+    if (!confirm('Delete all snapshots for every model? This cannot be undone.')) return;
+    localStorage.removeItem('tonex_snapshots');
+    state.snapshots = [];
+    state.activeSnapshotId = null;
+    _lastLoadedModel = null;
+    const el = document.getElementById('clear-snap-status');
+    if (el) el.textContent = 'All snapshots cleared.';
+    renderSnapshotBar();
+}
+
+function deleteSnapshot(id) {
     if (state.snapshots.length <= 1) return;
     const all = JSON.parse(localStorage.getItem('tonex_snapshots') || '{}');
     for (const m of Object.keys(all)) { all[m] = (all[m]||[]).filter(s => s.id !== id); }
